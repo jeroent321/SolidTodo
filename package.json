@@ -5,8 +5,8 @@
   "solidrt": {
     "appId": "local.jeroen.todo",
     "displayName": "TODO",
-    "icon": null,
-    "iconBackground": null,
+    "icon": "assets/icon.svg",
+    "iconBackground": "#0f1115",
     "versionCode": null,
     "fonts": {
       "sans": true,
