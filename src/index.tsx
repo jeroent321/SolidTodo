@@ -242,9 +242,10 @@ function Row(props: {
   )
 }
 
-function Tab(props: { label: string; active: boolean; onSelect: () => void }) {
+/** A segment of the tab bar; `weight` is its share of the width (default 2). */
+function Tab(props: { label: string; active: boolean; onSelect: () => void; weight?: number }) {
   return (
-    <view flexGrow={1} flexBasis={0} height={36} alignItems="center" justifyContent="center" onPointerDown={props.onSelect}>
+    <view flexGrow={props.weight ?? 2} flexBasis={0} height={36} alignItems="center" justifyContent="center" onPointerDown={props.onSelect}>
       <Show when={props.active}>
         <d-rect color={ACCENT} radius={9} />
       </Show>
@@ -426,7 +427,7 @@ function TodoList(props: { db: Database }) {
         <d-rect color={CARD} radius={12} />
         <Tab label={`Open (${open()})`} active={tab() === "open"} onSelect={() => selectTab("open")} />
         <Tab label={`Completed (${doneCount()})`} active={tab() === "done"} onSelect={() => selectTab("done")} />
-        <Tab label={`Trash (${trashed().length})`} active={tab() === "trash"} onSelect={() => selectTab("trash")} />
+        <Tab label={`Trash (${trashed().length})`} active={tab() === "trash"} onSelect={() => selectTab("trash")} weight={1} />
       </view>
 
       <Show when={tab() === "open"}>
