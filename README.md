@@ -3,7 +3,7 @@
 A small to-do list app built with [SolidRT](https://github.com/wellawaretech/solidrt). It runs as a desktop window and as an Android app.
 
 - Tasks live in a local SQLite database (`todo.db`) in the app's own private storage folder. The app has no network code.
-- Add, tick off, delete and clear finished tasks. Move a task to the top with ↑, or hold it and drag it to reorder.
+- Add and tick off tasks; Open and Completed tabs, with creation and completion times. Deleting moves a task to the Trash tab, where it can be restored or deleted for good.
 - Each task shows when it was created.
 
 ## Run on the desktop

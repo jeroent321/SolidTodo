@@ -11,6 +11,8 @@
 //   move it, and the new order is saved in one transaction.
 // - tabs: Open and Completed; ticking a task off moves it to Completed and
 //   stamps `completed_at`, unticking moves it back to the top of Open.
+// - trash: × stamps `deleted_at` and the task shows only in the Trash tab,
+//   from where it can be restored or deleted for good.
 import {
   render,
   createSignal,
@@ -41,7 +43,7 @@ const MUTED = "#7d8494"
 const ACCENT = "#4f8cff"
 const GAP = 8
 
-type Todo = { id: number; text: string; done: number; created_at: number; completed_at: number | null }
+type Todo = { id: number; text: string; done: number; created_at: number; completed_at: number | null; deleted_at: number | null }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -64,7 +66,8 @@ async function openDb(): Promise<Database> {
       done       INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       position   INTEGER NOT NULL DEFAULT 0,
-      completed_at INTEGER
+      completed_at INTEGER,
+      deleted_at   INTEGER
     );
   `)
   // Databases from before reordering have no position column: add it and
@@ -82,6 +85,9 @@ async function openDb(): Promise<Database> {
   // already done then keep an unknown one (NULL) and show none.
   if (!columns.some((c) => c.name === "completed_at")) {
     await db.exec("ALTER TABLE todos ADD COLUMN completed_at INTEGER")
+  }
+  if (!columns.some((c) => c.name === "deleted_at")) {
+    await db.exec("ALTER TABLE todos ADD COLUMN deleted_at INTEGER")
   }
   return db
 }
@@ -157,6 +163,8 @@ function Row(props: {
   todo: Todo
   onToggle: () => void
   onDelete: () => void
+  /** Set in the Trash tab: the row shows a restore button, and × deletes for good. */
+  onRestore?: () => void
   /** Absent on the first task, which is already at the top. */
   onMoveToTop?: () => void
   drag?: Drag
@@ -212,6 +220,9 @@ function Row(props: {
           <Show when={done() && props.todo.completed_at != null}>
             {` · Completed ${formatTime(props.todo.completed_at!)}`}
           </Show>
+          <Show when={props.todo.deleted_at != null}>
+            {` · Deleted ${formatTime(props.todo.deleted_at!)}`}
+          </Show>
         </text>
       </view>
       <Show when={props.onMoveToTop}>
@@ -219,8 +230,13 @@ function Row(props: {
           <text fontSize={18} color={MUTED}>↑</text>
         </view>
       </Show>
+      <Show when={props.onRestore}>
+        <view height={40} paddingLeft={8} paddingRight={8} alignItems="center" justifyContent="center" onPointerUp={() => props.onRestore?.()}>
+          <text fontSize={15} color={ACCENT}>Restore</text>
+        </view>
+      </Show>
       <view width={40} height={40} alignItems="center" justifyContent="center" onPointerUp={props.onDelete}>
-        <text fontSize={22} color={MUTED}>×</text>
+        <text fontSize={22} color={props.onRestore ? "#e5484d" : MUTED}>×</text>
       </view>
     </view>
   )
@@ -240,7 +256,7 @@ function Tab(props: { label: string; active: boolean; onSelect: () => void }) {
 function TodoList(props: { db: Database }) {
   // The connection never changes for this component's life.
   let db = untrack(() => props.db)
-  let rows = createQuery(db, "SELECT id, text, done, created_at, completed_at FROM todos ORDER BY position, id")
+  let rows = createQuery(db, "SELECT id, text, done, created_at, completed_at, deleted_at FROM todos ORDER BY position, id")
   let stored = createMemo(() => (rows() ?? []) as unknown as Todo[])
   // After a drop the new order shows at once from `localOrder`, until the
   // query re-reads the rows it just wrote; then the database is the truth again.
@@ -255,17 +271,27 @@ function TodoList(props: { db: Database }) {
     let rank = new Map(order.map((id, i) => [id, i]))
     return [...list].sort((a, b) => (rank.get(a.id) ?? -1) - (rank.get(b.id) ?? -1))
   })
-  let open = createMemo(() => todos().filter((t) => t.done === 0).length)
-  let doneCount = createMemo(() => todos().length - open())
+  let live = createMemo(() => todos().filter((t) => t.deleted_at == null))
+  let trashed = createMemo(() =>
+    todos()
+      .filter((t) => t.deleted_at != null)
+      .sort((a, b) => b.deleted_at! - a.deleted_at!),
+  )
+  let open = createMemo(() => live().filter((t) => t.done === 0).length)
+  let doneCount = createMemo(() => live().length - open())
 
-  // Two tabs: open tasks in their saved order, completed ones newest first.
-  let [tab, setTab] = createSignal<"open" | "done">("open")
+  // Three tabs: open tasks in their saved order, completed ones newest first,
+  // and the trash (both kinds) most recently deleted first.
+  type TabName = "open" | "done" | "trash"
+  let [tab, setTab] = createSignal<TabName>("open")
   let visible = createMemo(() =>
     tab() === "open"
-      ? todos().filter((t) => t.done === 0)
-      : todos()
-          .filter((t) => t.done === 1)
-          .sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0)),
+      ? live().filter((t) => t.done === 0)
+      : tab() === "done"
+        ? live()
+            .filter((t) => t.done === 1)
+            .sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0))
+        : trashed(),
   )
 
   // Writes go straight to SQLite; createQuery picks them up via onWrite.
@@ -293,8 +319,24 @@ function TodoList(props: { db: Database }) {
           [t.id],
         )
       : db.run("UPDATE todos SET done = 1, completed_at = ? WHERE id = ?", [Date.now(), t.id])
-  let remove = (t: Todo) => db.run("DELETE FROM todos WHERE id = ?", [t.id])
-  let clearDone = () => db.run("DELETE FROM todos WHERE done = 1")
+  // × outside the trash only moves a task there; restoring an open task puts
+  // it back at the top of Open. Only the trash deletes rows for good.
+  let trash = (t: Todo) => db.run("UPDATE todos SET deleted_at = ? WHERE id = ?", [Date.now(), t.id])
+  let restore = (t: Todo) =>
+    db.run(
+      "UPDATE todos SET deleted_at = NULL, position = (SELECT COALESCE(MIN(position), 0) - 1 FROM todos) WHERE id = ?",
+      [t.id],
+    )
+  let deleteForever = (t: Todo) => db.run("DELETE FROM todos WHERE id = ? AND deleted_at IS NOT NULL", [t.id])
+  let trashCompleted = () =>
+    db.run("UPDATE todos SET deleted_at = ? WHERE done = 1 AND deleted_at IS NULL", [Date.now()])
+  // Emptying the trash cannot be undone, so it takes a second tap.
+  let [confirmEmpty, setConfirmEmpty] = createSignal(false)
+  let emptyTrash = () => {
+    if (!confirmEmpty()) return setConfirmEmpty(true)
+    setConfirmEmpty(false)
+    db.run("DELETE FROM todos WHERE deleted_at IS NOT NULL")
+  }
 
   // Scrolling: wheel on desktop, drag on touch. A tap that turned into a
   // scroll must not also toggle the row under the finger, hence `panned`.
@@ -308,8 +350,9 @@ function TodoList(props: { db: Database }) {
     onPanMove: (_dx, dy) => scroll.scrollBy({ y: -dy }),
     onPanEnd: () => queueMicrotask(() => (panned = false)),
   })
-  let selectTab = (t: "open" | "done") => {
+  let selectTab = (t: TabName) => {
     setTab(t)
+    setConfirmEmpty(false)
     scroll.scrollTo({ y: 0 })
   }
   let tap = (fn: () => void) => () => {
@@ -383,6 +426,7 @@ function TodoList(props: { db: Database }) {
         <d-rect color={CARD} radius={12} />
         <Tab label={`Open (${open()})`} active={tab() === "open"} onSelect={() => selectTab("open")} />
         <Tab label={`Completed (${doneCount()})`} active={tab() === "done"} onSelect={() => selectTab("done")} />
+        <Tab label={`Trash (${trashed().length})`} active={tab() === "trash"} onSelect={() => selectTab("trash")} />
       </view>
 
       <Show when={tab() === "open"}>
@@ -404,8 +448,9 @@ function TodoList(props: { db: Database }) {
               <Row
                 todo={t()}
                 nodeRef={(n) => nodes.set(t().id, n)}
-                onToggle={tap(() => toggle(t()))}
-                onDelete={tap(() => remove(t()))}
+                onToggle={tab() === "trash" ? () => {} : tap(() => toggle(t()))}
+                onDelete={tap(() => (tab() === "trash" ? deleteForever(t()) : trash(t())))}
+                onRestore={tab() === "trash" ? tap(() => restore(t())) : undefined}
                 onMoveToTop={tab() !== "open" || visible()[0]?.id === t().id ? undefined : tap(() => moveToTop(t()))}
                 drag={tab() === "open" ? dragFor(t()) : undefined}
                 shift={shiftOf(t().id)}
@@ -423,15 +468,20 @@ function TodoList(props: { db: Database }) {
           </Show>
           <Show when={visible().length === 0}>
             <view paddingTop={40} alignItems="center">
-              <text fontSize={16} color={MUTED}>{tab() === "open" ? "Nothing to do." : "Nothing completed yet."}</text>
+              <text fontSize={16} color={MUTED}>{tab() === "open" ? "Nothing to do." : tab() === "done" ? "Nothing completed yet." : "Trash is empty."}</text>
             </view>
           </Show>
         </view>
       </view>
 
       <Show when={tab() === "done" && doneCount() > 0}>
-        <view alignSelf="center" paddingTop={6} paddingBottom={6} paddingLeft={14} paddingRight={14} onPointerDown={clearDone}>
-          <text fontSize={15} color={ACCENT}>Clear all completed</text>
+        <view alignSelf="center" paddingTop={6} paddingBottom={6} paddingLeft={14} paddingRight={14} onPointerDown={trashCompleted}>
+          <text fontSize={15} color={ACCENT}>Move all completed to Trash</text>
+        </view>
+      </Show>
+      <Show when={tab() === "trash" && trashed().length > 0}>
+        <view alignSelf="center" paddingTop={6} paddingBottom={6} paddingLeft={14} paddingRight={14} onPointerDown={emptyTrash}>
+          <text fontSize={15} color="#e5484d">{confirmEmpty() ? "Tap again to delete them for good" : "Empty Trash"}</text>
         </view>
       </Show>
     </view>
