@@ -13,10 +13,13 @@
 //   stamps `completed_at`, unticking moves it back to the top of Open.
 // - trash: × stamps `deleted_at` and the task shows only in the Trash tab,
 //   from where it can be restored or deleted for good.
+// - editing: tapping a task's text edits it in place (Enter or leaving the
+//   field saves, Escape cancels); only the checkbox ticks a task off.
 import {
   render,
   createSignal,
   createMemo,
+  onSettled,
   createEffect,
   createLongPress,
   getBoundingBox,
@@ -151,6 +154,46 @@ function Field(props: { onSubmit: (text: string) => void }) {
   )
 }
 
+// A task's text being edited in place. The draft lives in TodoList, so a
+// tap on another task can save this one first. Takes focus and raises the
+// keyboard once mounted; Enter or losing focus saves, Escape cancels.
+function EditLine(props: { draft: string; onInput: (edit: (draft: string) => string) => void; onSave: () => void; onCancel: () => void }) {
+  let node: NodeRef | undefined
+  onSettled(() => {
+    if (!node) return
+    setFocus(node.id)
+    startTextInput()
+  })
+  let onKeyDown = (e: KeyEvent) => {
+    if (e.key === "Enter") props.onSave()
+    else if (e.key === "Escape") props.onCancel()
+    else if (e.key === "Backspace") props.onInput((d) => Array.from(d).slice(0, -1).join(""))
+    else return
+    e.stopPropagation()
+  }
+  return (
+    <view
+      ref={(n: NodeRef) => (node = n)}
+      focusable
+      cursor="text"
+      paddingLeft={6}
+      paddingRight={6}
+      marginLeft={-6}
+      onTextInput={(e) => props.onInput((d) => d + e.text)}
+      onKeyDown={onKeyDown}
+      onBlur={() => props.onSave()}
+      textInputHints={{ capitalize: "sentences" }}
+    >
+      <d-rect color={BG} radius={6} />
+      <d-rect color={ACCENT} radius={6} drawStyle="stroke" strokeWidth={1.5} />
+      <text fontSize={17} color={TEXT}>
+        {props.draft}
+        <span color={ACCENT}>|</span>
+      </text>
+    </view>
+  )
+}
+
 type Drag = {
   onStart: () => void
   onMove: (dy: number) => void
@@ -164,6 +207,13 @@ function Row(props: {
   todo: Todo
   onToggle: () => void
   onDelete: () => void
+  /** Tapping the text starts editing it; absent where tasks cannot be edited. */
+  onEdit?: () => void
+  /** The draft while this task is being edited, else undefined. */
+  draft?: string
+  onDraft?: (edit: (draft: string) => string) => void
+  onSave?: () => void
+  onCancelEdit?: () => void
   /** Set in the Trash tab: the row shows a restore button, and × deletes for good. */
   onRestore?: () => void
   /** Absent on the first task, which is already at the top. */
@@ -182,7 +232,7 @@ function Row(props: {
   })
   return (
     <view
-      ref={(n: NodeRef) => props.nodeRef?.(n)}
+      ref={(n: NodeRef) => untrack(() => props.nodeRef)?.(n)}
       flexDirection="row"
       alignItems="center"
       gap={12}
@@ -198,7 +248,7 @@ function Row(props: {
       <Show when={props.lifted}>
         <d-rect color={ACCENT} radius={12} drawStyle="stroke" strokeWidth={1.5} />
       </Show>
-      <view width={26} height={26} alignItems="center" justifyContent="center" onPointerUp={props.onToggle}>
+      <view width={26} height={26} alignItems="center" justifyContent="center" onPointerUp={() => props.onToggle()}>
         <d-rect
           color={done() ? ACCENT : MUTED}
           radius={7}
@@ -209,13 +259,22 @@ function Row(props: {
           <text fontSize={16} fontWeight={700} color="#ffffff">✓</text>
         </Show>
       </view>
-      <view flexGrow={1} minWidth={0} paddingTop={10} paddingBottom={10} gap={2} onPointerUp={props.onToggle}>
-        <text
-          fontSize={17}
-          color={done() ? MUTED : TEXT}
+      <view flexGrow={1} minWidth={0} paddingTop={10} paddingBottom={10} gap={2} onPointerUp={() => props.onEdit?.()}>
+        <Show
+          when={props.draft !== undefined}
+          fallback={
+            <text fontSize={17} color={done() ? MUTED : TEXT}>
+              {props.todo.text}
+            </text>
+          }
         >
-          {props.todo.text}
-        </text>
+          <EditLine
+            draft={props.draft ?? ""}
+            onInput={(edit) => props.onDraft?.(edit)}
+            onSave={() => props.onSave?.()}
+            onCancel={() => props.onCancelEdit?.()}
+          />
+        </Show>
         <text fontSize={12} color={MUTED}>
           Created {formatTime(props.todo.created_at)}
           <Show when={done() && props.todo.completed_at != null}>
@@ -236,7 +295,7 @@ function Row(props: {
           <text fontSize={15} color={ACCENT}>Restore</text>
         </view>
       </Show>
-      <view width={40} height={40} alignItems="center" justifyContent="center" onPointerUp={props.onDelete}>
+      <view width={40} height={40} alignItems="center" justifyContent="center" onPointerUp={() => props.onDelete()}>
         <text fontSize={22} color={props.onRestore ? "#e5484d" : MUTED}>×</text>
       </view>
     </view>
@@ -330,6 +389,22 @@ function TodoList(props: { db: Database }) {
       : db.run("UPDATE todos SET done = 1, completed_at = ? WHERE id = ?", [Date.now(), t.id])
   // × outside the trash only moves a task there; restoring an open task puts
   // it back at the top of Open. Only the trash deletes rows for good.
+  // Editing: one task at a time. Saving writes a changed, non-blank text
+  // straight to the database; starting another edit saves the current one.
+  let [editing, setEditing] = createSignal<{ id: number; draft: string } | null>(null)
+  let saveEdit = () => {
+    let e = editing()
+    if (!e) return
+    setEditing(null)
+    let text = e.draft.trim()
+    let before = todos().find((t) => t.id === e.id)?.text
+    if (text && text !== before) db.run("UPDATE todos SET text = ? WHERE id = ?", [text, e.id])
+  }
+  let startEdit = (t: Todo) => {
+    if (editing()?.id === t.id) return
+    saveEdit()
+    setEditing({ id: t.id, draft: t.text })
+  }
   let trash = (t: Todo) => db.run("UPDATE todos SET deleted_at = ? WHERE id = ?", [Date.now(), t.id])
   let restore = (t: Todo) =>
     db.run(
@@ -361,6 +436,7 @@ function TodoList(props: { db: Database }) {
   })
   let selectTab = (t: TabName) => {
     setTab(t)
+    saveEdit()
     setConfirmEmpty(false)
     scroll.scrollTo({ y: 0 })
   }
@@ -460,6 +536,11 @@ function TodoList(props: { db: Database }) {
                 onToggle={tab() === "trash" ? () => {} : tap(() => toggle(t()))}
                 onDelete={tap(() => (tab() === "trash" ? deleteForever(t()) : trash(t())))}
                 onRestore={tab() === "trash" ? tap(() => restore(t())) : undefined}
+                onEdit={tab() === "trash" ? undefined : tap(() => startEdit(t()))}
+                draft={editing()?.id === t().id ? editing()!.draft : undefined}
+                onDraft={(edit) => setEditing((e) => e && { ...e, draft: edit(e.draft) })}
+                onSave={saveEdit}
+                onCancelEdit={() => setEditing(null)}
                 onMoveToTop={tab() !== "open" || visible()[0]?.id === t().id ? undefined : tap(() => moveToTop(t()))}
                 drag={tab() === "open" ? dragFor(t()) : undefined}
                 shift={shiftOf(t().id)}

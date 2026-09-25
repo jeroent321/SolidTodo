@@ -10,7 +10,7 @@ A small to-do list app built with [SolidRT](https://github.com/wellawaretech/sol
 </p>
 
 - Tasks live in a local SQLite database (`todo.db`) in the app's own private storage folder. The app has no network code.
-- Add and tick off tasks; Open and Completed tabs, with creation and completion times. Deleting moves a task to the Trash tab, where it can be restored or deleted for good.
+- Add tasks, tap a task's text to edit it, and tick it off with its checkbox; Open and Completed tabs, with creation and completion times. Deleting moves a task to the Trash tab, where it can be restored or deleted for good.
 - Each task shows when it was created.
 
 ## Run on the desktop
