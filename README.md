@@ -1,4 +1,4 @@
-# TODO
+# SolidTodo
 
 A small to-do list app built with [SolidRT](https://github.com/wellawaretech/solidrt). It runs as a desktop window and as an Android app.
 
