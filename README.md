@@ -2,6 +2,11 @@
 
 A small to-do list app built with [SolidRT](https://github.com/wellawaretech/solidrt). It runs as a desktop window and as an Android app.
 
+<p>
+  <img src="docs/screenshot-open.png" width="300" alt="Open tab with five tasks">
+  <img src="docs/screenshot-completed.png" width="300" alt="Completed tab with completion times">
+</p>
+
 - Tasks live in a local SQLite database (`todo.db`) in the app's own private storage folder. The app has no network code.
 - Add and tick off tasks; Open and Completed tabs, with creation and completion times. Deleting moves a task to the Trash tab, where it can be restored or deleted for good.
 - Each task shows when it was created.
