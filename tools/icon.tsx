@@ -1,5 +1,5 @@
 // The app icon: the SolidRT mark (its seven puzzle segments, from
-// @solidrt/core's Logo) recoloured as a rainbow, above the word TODO.
+// @solidrt/core's Logo) recoloured as a rainbow, with the word TODO across it.
 // Render it to assets/icon.png (from todo/):
 //   bunx srt render tools/icon.tsx --file --size 1024x1024 --fps 1 --duration 1 -o icon
 // then move the written icon-000000.png to assets/icon.png.
@@ -21,13 +21,20 @@ function Icon() {
   return (
     <window alignItems="center" justifyContent="center">
       <d-rect color={BG} />
-      <view flex={1} alignSelf="stretch" designSize={[1024, 1024]} alignItems="center" justifyContent="center" gap={24}>
-        <view width={500} height={500} designSize={[100, 100]}>
+      <view flex={1} alignSelf="stretch" designSize={[1024, 1024]} alignItems="center" justifyContent="center">
+        <view width={760} height={760} designSize={[100, 100]}>
           <For each={SEGMENTS}>
             {(seg) => <d-path d={seg.d} color={createLinearGradient(0, 0, 1, 1, [{ offset: 0, color: seg.light }, { offset: 1, color: seg.dark }])} />}
           </For>
         </view>
-        <text fontSize={190} fontWeight={900} color="#ffffff">TODO</text>
+        {/* TODO across the middle of the mark: a soft dark copy offset below
+            the white one keeps it readable over every segment colour. */}
+        <view position="absolute" left={0} right={0} top={0} bottom={0} alignItems="center" justifyContent="center" x={8} y={12}>
+          <text fontSize={230} fontWeight={900} color="#0f1115b3">TODO</text>
+        </view>
+        <view position="absolute" left={0} right={0} top={0} bottom={0} alignItems="center" justifyContent="center">
+          <text fontSize={230} fontWeight={900} color="#ffffff">TODO</text>
+        </view>
       </view>
     </window>
   )

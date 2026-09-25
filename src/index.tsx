@@ -244,15 +244,19 @@ function Row(props: {
 }
 
 /** A segment of the tab bar; `weight` is its share of the width (Open 2, the others 1). */
-function Tab(props: { label: string; active: boolean; onSelect: () => void; weight?: number }) {
+function Tab(props: { label: string; count: number; active: boolean; onSelect: () => void; weight?: number }) {
+  let size = () => (capabilities.windowSizeClass === "compact" ? 13 : 15)
   return (
     <view flexGrow={props.weight ?? 2} flexBasis={0} height={36} alignItems="center" justifyContent="center" onPointerDown={props.onSelect}>
       <Show when={props.active}>
         <d-rect color={ACCENT} radius={9} />
       </Show>
-      {/* A quarter of a phone's width fits "Completed (12)" only at a smaller size. */}
-      <text fontSize={capabilities.windowSizeClass === "compact" ? 13 : 15} fontWeight={600} color={props.active ? "#ffffff" : MUTED}>
+      {/* A quarter of a phone's width fits "Completed 12" only at a smaller size. */}
+      <text fontSize={size()} fontWeight={600} color={props.active ? "#ffffff" : MUTED}>
         {props.label}
+        <span fontWeight={400} fontSize={size() - 2} color={props.active ? "#ffffffa6" : "#7d849499"}>
+          {`  ${props.count}`}
+        </span>
       </text>
     </view>
   )
@@ -429,9 +433,9 @@ function TodoList(props: { db: Database }) {
 
       <view flexDirection="row" gap={6} padding={4}>
         <d-rect color={CARD} radius={12} />
-        <Tab label={`Open (${open()})`} active={tab() === "open"} onSelect={() => selectTab("open")} />
-        <Tab label={`Completed (${doneCount()})`} active={tab() === "done"} onSelect={() => selectTab("done")} weight={1} />
-        <Tab label={`Trash (${trashed().length})`} active={tab() === "trash"} onSelect={() => selectTab("trash")} weight={1} />
+        <Tab label="Open" count={open()} active={tab() === "open"} onSelect={() => selectTab("open")} />
+        <Tab label="Completed" count={doneCount()} active={tab() === "done"} onSelect={() => selectTab("done")} weight={1} />
+        <Tab label="Trash" count={trashed().length} active={tab() === "trash"} onSelect={() => selectTab("trash")} weight={1} />
       </view>
 
       <Show when={tab() === "open"}>
