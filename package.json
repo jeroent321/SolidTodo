@@ -1,0 +1,31 @@
+{
+  "name": "todo",
+  "type": "module",
+  "private": true,
+  "solidrt": {
+    "appId": "local.jeroen.todo",
+    "displayName": "TODO",
+    "icon": null,
+    "iconBackground": null,
+    "versionCode": null,
+    "fonts": {
+      "sans": true,
+      "serif": false,
+      "mono": false
+    }
+  },
+  "scripts": {
+    "dev": "srt run",
+    "pack": "srt pack",
+    "android": "srt android",
+    "apk": "srt pack --apk && bun tools/private-apk.ts"
+  },
+  "dependencies": {
+    "@solidrt/core": "0.0.62"
+  },
+  "devDependencies": {
+    "@solidrt/cli": "0.0.62",
+    "@solidrt/flux-types": "0.0.62",
+    "typescript": "^7"
+  }
+}
