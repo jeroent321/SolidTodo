@@ -15,6 +15,8 @@
 //   from where it can be restored or deleted for good.
 // - editing: tapping a task's text edits it in place (Enter or leaving the
 //   field saves, Escape cancels); only the checkbox ticks a task off.
+// - motion: ticking a box fills it first, then the task slides out to its
+//   other tab while the rows below glide up (native transitions, no JS per frame).
 import {
   render,
   createSignal,
@@ -36,7 +38,7 @@ import {
   Show,
   Loading,
 } from "@solidrt/core"
-import type { KeyEvent } from "@solidrt/core"
+import type { KeyEvent, Transition } from "@solidrt/core"
 import { Database, createQuery } from "@solidrt/core/data"
 
 const BG = "#0f1115"
@@ -97,6 +99,25 @@ async function openDb(): Promise<Database> {
 }
 
 type NodeRef = { id: number }
+
+// A row slides in from the left and out to the right, fading, while the rows
+// around it glide to their new places.
+const GLIDE = { duration: 350, bounce: 0.1 } satisfies Transition
+const SLIDE = {
+  duration: 260,
+  curve: "ease-out",
+  from: -40,
+  exit: { value: 60, curve: "ease-in", duration: 220 },
+} satisfies Transition
+const FADE = {
+  duration: 260,
+  curve: "ease-out",
+  from: 0,
+  exit: { value: 0, curve: "ease-in", duration: 220 },
+} satisfies Transition
+const ROW_MOTION = { layout: GLIDE, x: SLIDE, opacity: FADE } satisfies Record<string, Transition>
+// How long a ticked box shows its new state before the task moves tabs.
+const TICK_MS = 220
 
 function Field(props: { onSubmit: (text: string) => void }) {
   let node: NodeRef | undefined
@@ -207,6 +228,8 @@ function Row(props: {
   todo: Todo
   onToggle: () => void
   onDelete: () => void
+  /** Overrides the stored state while a tick is on its way to the database. */
+  checked?: boolean
   /** Tapping the text starts editing it; absent where tasks cannot be edited. */
   onEdit?: () => void
   /** The draft while this task is being edited, else undefined. */
@@ -224,7 +247,7 @@ function Row(props: {
   hidden?: boolean
   lifted?: boolean
 }) {
-  let done = () => props.todo.done === 1
+  let done = () => props.checked ?? props.todo.done === 1
   let lp = createLongPress({
     onLongPress: () => props.drag?.onStart(),
     onLongPressMove: (_dx, dy) => props.drag?.onMove(dy),
@@ -389,6 +412,29 @@ function TodoList(props: { db: Database }) {
       : db.run("UPDATE todos SET done = 1, completed_at = ? WHERE id = ?", [Date.now(), t.id])
   // × outside the trash only moves a task there; restoring an open task puts
   // it back at the top of Open. Only the trash deletes rows for good.
+  // Ticking: the box flips at once, the write (and so the move to the other
+  // tab) follows TICK_MS later so the tick is seen.
+  let [ticking, setTicking] = createSignal<Record<number, boolean>>({})
+  let tick = (t: Todo) => {
+    if (t.id in ticking()) return
+    setTicking((m) => ({ ...m, [t.id]: t.done === 0 }))
+    setTimeout(async () => {
+      await toggle(t)
+      setTicking(({ [t.id]: _, ...rest }) => rest)
+    }, TICK_MS)
+  }
+  // Row motion is switched off briefly for changes that are not a task
+  // arriving or leaving: a tab switch, a drag drop, the first load.
+  let [quiet, setQuiet] = createSignal(true, { ownedWrite: true })
+  let hush = () => {
+    setQuiet(true)
+    setTimeout(() => setQuiet(false), 80)
+  }
+  onSettled(() => {
+    let id = setTimeout(() => setQuiet(false), 400)
+    return () => clearTimeout(id)
+  })
+
   // Editing: one task at a time. Saving writes a changed, non-blank text
   // straight to the database; starting another edit saves the current one.
   let [editing, setEditing] = createSignal<{ id: number; draft: string } | null>(null)
@@ -435,6 +481,7 @@ function TodoList(props: { db: Database }) {
     onPanEnd: () => queueMicrotask(() => (panned = false)),
   })
   let selectTab = (t: TabName) => {
+    hush()
     setTab(t)
     saveEdit()
     setConfirmEmpty(false)
@@ -491,6 +538,7 @@ function TodoList(props: { db: Database }) {
       ids.splice(target(), 0, moved!)
       setDrag(null)
       if (target() === d.from) return
+      hush()
       setLocalOrder(ids)
       saveOrder(ids)
     },
@@ -530,10 +578,12 @@ function TodoList(props: { db: Database }) {
         <view ref={(n: NodeRef) => (content = n)} position="relative" flexShrink={0} gap={GAP} paddingBottom={8}>
           <For each={visible()} keyed={(t) => t.id}>
             {(t) => (
+              <view x={0} opacity={1} transition={quiet() ? undefined : ROW_MOTION}>
               <Row
                 todo={t()}
+                checked={ticking()[t().id]}
                 nodeRef={(n) => nodes.set(t().id, n)}
-                onToggle={tab() === "trash" ? () => {} : tap(() => toggle(t()))}
+                onToggle={tab() === "trash" ? () => {} : tap(() => tick(t()))}
                 onDelete={tap(() => (tab() === "trash" ? deleteForever(t()) : trash(t())))}
                 onRestore={tab() === "trash" ? tap(() => restore(t())) : undefined}
                 onEdit={tab() === "trash" ? undefined : tap(() => startEdit(t()))}
@@ -546,6 +596,7 @@ function TodoList(props: { db: Database }) {
                 shift={shiftOf(t().id)}
                 hidden={lifted()?.todo.id === t().id}
               />
+              </view>
             )}
           </For>
           {/* Last child, so it paints above every row it passes over. */}
